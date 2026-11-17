@@ -6,6 +6,38 @@
 <title>JIMMY — Premium Men's Wear</title>
 <meta name="description" content="JIMMY — Premium Men's Fashion">
 
+<!-- Firebase SDKs -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAHEe4yZ7neGSfP2Q1vmEUHxO5oY3...",
+  authDomain: "jimmy-fddb7.firebaseapp.com",
+  projectId: "jimmy-fddb7",
+  storageBucket: "jimmy-fddb7.appspot.com",
+  messagingSenderId: "242465124782",
+  appId: "1:242465124782:web:16c82ce361b7f2b984fa58",
+  measurementId: "G-CD2WV04M8J"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+window.db = db;
+window.collection = collection;
+window.getDocs = getDocs;
+window.setDoc = setDoc;
+window.doc = doc;
+window.deleteDoc = deleteDoc;
+
+document.addEventListener("DOMContentLoaded", () => {
+  if(typeof window.initJimmyApp === 'function') {
+    window.initJimmyApp();
+  }
+});
+</script>
+
 <style>
 :root{
 --ink:#171613;
@@ -595,6 +627,15 @@ border-right:3px solid var(--accent);
 max-width:90%;
 }
 
+.img-preview{
+width:120px;
+height:150px;
+object-fit:cover;
+border:1px solid var(--accent);
+margin-top:10px;
+display:none;
+}
+
 @media(max-width:850px){
 .grid{
 grid-template-columns:repeat(2,1fr);
@@ -874,7 +915,6 @@ height:34px;
 <div class="toast" id="toast"></div>
 
 <script>
-
 'use strict';
 
 const WA_NUMBER='201126511633';
@@ -935,37 +975,125 @@ badge:''
 }
 ];
 
-function readStored(key,fallback){
-try{
-const value=localStorage.getItem(key);
-return value===null?fallback:JSON.parse(value);
-}catch(error){
-console.error('Storage read error:',error);
-return fallback;
-}
-}
-
-let products=readStored('jimmy_products',null)||defaultProducts;
+let products=[];
 let cart=readStored('jimmy_cart',[]);
 let favs=readStored('jimmy_favs',[]);
 
 let selectedProduct=null;
 let toastTimer=null;
+let compressedImageBase64=null;
 
-const imageURLCache=new Map();
-
-function save(){
+function readStored(key,fallback){
 try{
-localStorage.setItem('jimmy_products',JSON.stringify(products));
+const value=localStorage.getItem(key);
+return value===null?fallback:JSON.parse(value);
+}catch(e){return fallback;}
+}
+
+function saveLocal(){
+try{
 localStorage.setItem('jimmy_cart',JSON.stringify(cart));
 localStorage.setItem('jimmy_favs',JSON.stringify(favs));
-return true;
-}catch(error){
-console.error('Save error:',error);
-toast('مساحة التخزين غير كافية. حاول تقليل حجم الصور.');
-return false;
+}catch(e){}
+}
+
+/* =================================================
+   ضاغط الصور الذكي (يصغر الأبعاد والحجم لـ <200KB)
+================================================= */
+function compressImageFile(file){
+return new Promise((resolve,reject)=>{
+const url=URL.createObjectURL(file);
+const img=new Image();
+img.onload=()=>{
+URL.revokeObjectURL(url);
+const MAX_WIDTH=750;
+const MAX_HEIGHT=1000;
+let w=img.width;
+let h=img.height;
+
+if(w>MAX_WIDTH||h>MAX_HEIGHT){
+const ratio=Math.min(MAX_WIDTH/w,MAX_HEIGHT/h);
+w=Math.round(w*ratio);
+h=Math.round(h*ratio);
+}
+
+const canvas=document.createElement('canvas');
+canvas.width=w;
+canvas.height=h;
+const ctx=canvas.getContext('2d');
+ctx.fillStyle='#ffffff';
+ctx.fillRect(0,0,w,h);
+ctx.drawImage(img,0,0,w,h);
+
+// ضغط الصورة بجودة متدرجة لو حجمها لسه كبير
+let quality=0.72;
+let dataUrl=canvas.toDataURL('image/jpeg',quality);
+while(dataUrl.length>450000 && quality>0.3){
+quality-=0.12;
+dataUrl=canvas.toDataURL('image/jpeg',quality);
+}
+resolve(dataUrl);
+};
+img.onerror=()=>{
+URL.revokeObjectURL(url);
+reject(new Error('تعذر قراءة الصورة'));
+};
+img.src=url;
+});
+}
+
+async function handleImageSelect(event){
+const file=event.target.files?.[0];
+const preview=document.getElementById('imgPreview');
+const status=document.getElementById('compressStatus');
+if(!file)return;
+
+if(!file.type.startsWith('image/')){
+toast('اختر ملف صورة صحيح');
+return;
+}
+
+if(status)status.textContent='جاري ضغط الصورة لتسريع التحميل...';
+
+try{
+const compressed=await compressImageFile(file);
+compressedImageBase64=compressed;
+const kb=Math.round((compressed.length*3)/4/1024);
+if(status)status.textContent=`تم ضغط الصورة بنجاح ✓ (الحجم الجديد: ${kb} كيلوبايت)`;
+if(preview){
+preview.src=compressed;
+preview.style.display='block';
+}
+}catch(e){
+toast('حصل خطأ أثناء ضغط الصورة');
+if(status)status.textContent='';
 }
 }
+
+async function initJimmyApp(){
+try{
+const querySnapshot=await window.getDocs(window.collection(window.db,"products"));
+if(querySnapshot.empty){
+for(const p of defaultProducts){
+await window.setDoc(window.doc(window.db,"products",String(p.id)),p);
+}
+products=defaultProducts;
+}else{
+products=[];
+querySnapshot.forEach((docSnap)=>{
+products.push(docSnap.data());
+});
+products.sort((a,b)=>Number(b.id)-Number(a.id));
+}
+}catch(e){
+console.error("Firestore error:",e);
+products=defaultProducts;
+}
+renderProducts();
+renderCart();
+}
+
+window.initJimmyApp=initJimmyApp;
 
 function money(n){
 return Number(n||0).toLocaleString('ar-EG')+' ج.م';
@@ -974,335 +1102,23 @@ return Number(n||0).toLocaleString('ar-EG')+' ج.م';
 function toast(message){
 const el=document.getElementById('toast');
 if(!el)return;
-
 el.textContent=message;
 el.style.display='block';
-
 clearTimeout(toastTimer);
-toastTimer=setTimeout(()=>{
-el.style.display='none';
-},3500);
+toastTimer=setTimeout(()=>{el.style.display='none';},3500);
 }
 
 function esc(value){
 return String(value??'').replace(/[&<>"']/g,c=>({
-'&':'&amp;',
-'<':'&lt;',
-'>':'&gt;',
-'"':'&quot;',
-"'":'&#39;'
+'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
 }[c]));
 }
 
-/* =====================================
-   تخزين الصور بطريقة IndexedDB
-===================================== */
-
-let imageDBPromise=null;
-
-function openImageDB(){
-
-if(!('indexedDB' in window)){
-return Promise.reject(new Error('IndexedDB غير مدعوم'));
-}
-
-if(imageDBPromise)return imageDBPromise;
-
-imageDBPromise=new Promise((resolve,reject)=>{
-
-const request=indexedDB.open('JIMMY_IMAGE_STORAGE',1);
-
-request.onupgradeneeded=event=>{
-const db=event.target.result;
-
-if(!db.objectStoreNames.contains('images')){
-db.createObjectStore('images');
-}
-};
-
-request.onsuccess=()=>{
-resolve(request.result);
-};
-
-request.onerror=()=>{
-reject(request.error||new Error('تعذر فتح مخزن الصور'));
-};
-
-});
-
-return imageDBPromise;
-}
-
-async function storeImage(blob){
-
-const db=await openImageDB();
-
-const key='jimmy_img_'+Date.now()+'_'+Math.random().toString(36).slice(2);
-
-return new Promise((resolve,reject)=>{
-
-const transaction=db.transaction('images','readwrite');
-
-transaction.objectStore('images').put(blob,key);
-
-transaction.oncomplete=()=>resolve(key);
-
-transaction.onerror=()=>{
-reject(transaction.error||new Error('تعذر حفظ الصورة'));
-};
-
-transaction.onabort=()=>{
-reject(transaction.error||new Error('تم إلغاء حفظ الصورة'));
-};
-
-});
-}
-
-async function getImageBlob(key){
-
-const db=await openImageDB();
-
-return new Promise((resolve,reject)=>{
-
-const transaction=db.transaction('images','readonly');
-
-const request=transaction.objectStore('images').get(key);
-
-request.onsuccess=()=>resolve(request.result||null);
-
-request.onerror=()=>reject(request.error);
-
-});
-}
-
-async function deleteImageBlob(key){
-
-try{
-
-const db=await openImageDB();
-
-return new Promise(resolve=>{
-
-const transaction=db.transaction('images','readwrite');
-
-transaction.objectStore('images').delete(key);
-
-transaction.oncomplete=()=>resolve(true);
-transaction.onerror=()=>resolve(false);
-
-});
-
-}catch(error){
-console.error(error);
-return false;
-}
-}
-
-/* ضغط الصورة من غير FileReader */
-
-async function prepareImage(file){
-
-const originalURL=URL.createObjectURL(file);
-
-try{
-
-const img=await new Promise((resolve,reject)=>{
-
-const image=new Image();
-
-image.onload=()=>resolve(image);
-image.onerror=()=>reject(new Error('تعذر فتح الصورة'));
-
-image.src=originalURL;
-
-});
-
-const maxSize=1200;
-
-const scale=Math.min(
-1,
-maxSize/Math.max(img.width,img.height)
-);
-
-const canvas=document.createElement('canvas');
-
-canvas.width=Math.max(1,Math.round(img.width*scale));
-canvas.height=Math.max(1,Math.round(img.height*scale));
-
-const ctx=canvas.getContext('2d');
-
-if(!ctx)throw new Error('تعذر تجهيز الصورة');
-
-ctx.fillStyle='#ffffff';
-ctx.fillRect(0,0,canvas.width,canvas.height);
-
-ctx.drawImage(img,0,0,canvas.width,canvas.height);
-
-const compressedBlob=await new Promise(resolve=>{
-canvas.toBlob(
-blob=>resolve(blob),
-'image/jpeg',
-0.82
-);
-});
-
-const dataURL=canvas.toDataURL('image/jpeg',0.78);
-
-return{
-blob:compressedBlob||file,
-dataURL
-};
-
-}catch(error){
-
-console.warn('Image compression fallback:',error);
-
-return{
-blob:file,
-dataURL:null
-};
-
-}finally{
-
-URL.revokeObjectURL(originalURL);
-
-}
-}
-
-/* تحويل صور المنتجات إلى روابط العرض */
-
-function imageMarkup(product,className='photo',style=''){
-
-const image=String(product.image||PLACEHOLDER);
-
-if(image.startsWith('idb:')){
-
-const key=image.slice(4);
-
-return `
-<img
-class="${className}"
-src="${PLACEHOLDER}"
-data-image-key="${esc(key)}"
-alt="${esc(product.name)}"
-style="${style}"
-onerror="this.src='${PLACEHOLDER}'">
-`;
-
-}
-
-return `
-<img
-class="${className}"
-src="${esc(image)}"
-alt="${esc(product.name)}"
-style="${style}"
-onerror="this.src='${PLACEHOLDER}'">
-`;
-
-}
-
-async function loadSavedImages(root=document){
-
-const elements=root.querySelectorAll('[data-image-key]');
-
-for(const element of elements){
-
-if(element.dataset.imageLoaded==='yes')continue;
-
-element.dataset.imageLoaded='yes';
-
-const key=element.dataset.imageKey;
-
-try{
-
-let url=imageURLCache.get(key);
-
-if(!url){
-
-const blob=await getImageBlob(key);
-
-if(!blob)throw new Error('الصورة غير موجودة');
-
-url=URL.createObjectURL(blob);
-
-imageURLCache.set(key,url);
-
-}
-
-if(element.isConnected){
-element.src=url;
-}
-
-}catch(error){
-
-console.error('Image loading error:',error);
-
-if(element.isConnected){
-element.src=PLACEHOLDER;
-}
-
-}
-
-}
-}
-
-/* نقل الصور القديمة المخزنة بصيغة Base64 */
-
-async function migrateOldImages(){
-
-let changed=false;
-
-for(const product of products){
-
-if(
-typeof product.image==='string'&&
-product.image.startsWith('data:image/')
-){
-
-try{
-
-const response=await fetch(product.image);
-const blob=await response.blob();
-
-const key=await storeImage(blob);
-
-product.image='idb:'+key;
-
-changed=true;
-
-}catch(error){
-
-console.warn('Old image migration failed:',error);
-
-}
-
-}
-
-}
-
-if(changed){
-save();
-renderProducts();
-}
-
-}
-
-/* =====================================
-   المنتجات
-===================================== */
-
 function renderProducts(){
-
-const searchInput=document.getElementById('search');
-const categoryInput=document.getElementById('category');
-const maxPriceInput=document.getElementById('maxPrice');
-const sortInput=document.getElementById('sort');
-
-const q=(searchInput?.value||'').toLowerCase();
-const cat=categoryInput?.value||'';
-const max=Number(maxPriceInput?.value)||Infinity;
-const sort=sortInput?.value||'new';
+const q=(document.getElementById('search')?.value||'').toLowerCase();
+const cat=document.getElementById('category')?.value||'';
+const max=Number(document.getElementById('maxPrice')?.value)||Infinity;
+const sort=document.getElementById('sort')?.value||'new';
 
 let list=products.filter(p=>
 (p.name+' '+p.category).toLowerCase().includes(q)&&
@@ -1316,316 +1132,170 @@ if(sort==='high')list.sort((a,b)=>b.price-a.price);
 document.getElementById('resultCount').textContent=list.length+' منتجات';
 
 document.getElementById('products').innerHTML=list.map(p=>`
-
 <article class="product">
-
 ${p.badge?`<span class="tag">${esc(p.badge)}</span>`:''}
-
-${imageMarkup(p)}
-
+<img class="photo" src="${esc(p.image||PLACEHOLDER)}" alt="${esc(p.name)}" onerror="this.src='${PLACEHOLDER}'">
 <div class="pbody">
-
 <p class="pname">${esc(p.name)}</p>
-
 <div class="muted">${esc(p.category)}</div>
-
 <div class="price">
 ${money(p.price)}
 ${p.oldPrice?`<span class="old">${money(p.oldPrice)}</span>`:''}
 </div>
-
 <div class="pactions">
-
 <button onclick="quickAdd(${Number(p.id)})">أضف للسلة</button>
-
 <button class="heart" onclick="toggleFav(${Number(p.id)})">
 ${favs.includes(p.id)?'♥':'♡'}
 </button>
-
 </div>
-
-<button class="outline" style="width:100%;margin-top:8px"
-onclick="details(${Number(p.id)})">
+<button class="outline" style="width:100%;margin-top:8px" onclick="details(${Number(p.id)})">
 التفاصيل والمقاسات
 </button>
-
 </div>
 </article>
-
 `).join('')||'<div class="empty">لا توجد منتجات مطابقة لبحثك حالياً.</div>';
 
 updateCounts();
-loadSavedImages(document.getElementById('products'));
-
 }
 
 function updateCounts(){
-
-document.getElementById('cartCount').textContent=
-cart.reduce((sum,item)=>sum+Number(item.qty||0),0);
-
+document.getElementById('cartCount').textContent=cart.reduce((sum,item)=>sum+Number(item.qty||0),0);
 document.getElementById('favCount').textContent=favs.length;
-
 }
 
 function details(id){
-
 const p=products.find(x=>Number(x.id)===Number(id));
-
 if(!p)return;
-
 selectedProduct=p;
-
 document.getElementById('productDetails').innerHTML=`
-
 <div class="formgrid">
-
-${imageMarkup(p,'photo','width:100%;max-height:480px;')}
-
+<img class="photo" src="${esc(p.image||PLACEHOLDER)}" style="width:100%;max-height:480px;object-fit:cover;" onerror="this.src='${PLACEHOLDER}'">
 <div>
-
 <div class="eyebrow">JIMMY COLLECTION</div>
-
 <h2>${esc(p.name)}</h2>
-
 <b>${money(p.price)}</b>
-
 <p>${esc(p.desc)}</p>
-
-<label class="label">
-المقاس
-
+<label class="label">المقاس
 <select id="detailSize" class="field">
 ${(p.sizes||['M','L','XL']).map(s=>`<option>${esc(s)}</option>`).join('')}
 </select>
 </label>
-
-<label class="label">
-اللون
-
+<label class="label">اللون
 <select id="detailColor" class="field">
 ${(p.colors||['أسود']).map(s=>`<option>${esc(s)}</option>`).join('')}
 </select>
 </label>
-
-<label class="label">
-الكمية
-
-<input id="detailQty" class="field"
-type="number" min="1"
-max="${Number(p.stock)||99}" value="1">
+<label class="label">الكمية
+<input id="detailQty" class="field" type="number" min="1" max="${Number(p.stock)||99}" value="1">
 </label>
-
-<button class="primary gold"
-style="width:100%;margin-top:15px"
-onclick="addSelected()">
-أضف للسلة
-</button>
-
+<button class="primary gold" style="width:100%;margin-top:15px" onclick="addSelected()">أضف للسلة</button>
 </div>
 </div>
 `;
-
 openModal('productModal');
-
-loadSavedImages(document.getElementById('productDetails'));
-
 }
 
 function addSelected(){
-
 const p=selectedProduct;
-
 if(!p)return;
-
 const size=document.getElementById('detailSize')?.value||'M';
 const color=document.getElementById('detailColor')?.value||'أسود';
-
-const qty=Math.max(
-1,
-Number(document.getElementById('detailQty')?.value)||1
-);
-
+const qty=Math.max(1,Number(document.getElementById('detailQty')?.value)||1);
 addCart(p.id,size,color,qty);
-
 closeModal('productModal');
-
 }
 
-function quickAdd(id){
-details(id);
-}
+function quickAdd(id){details(id);}
 
 function addCart(id,size='M',color='أسود',qty=1){
-
 const p=products.find(x=>Number(x.id)===Number(id));
-
 if(!p)return;
-
-const old=cart.find(x=>
-Number(x.id)===Number(id)&&
-x.size===size&&
-x.color===color
-);
-
+const old=cart.find(x=>Number(x.id)===Number(id)&&x.size===size&&x.color===color);
 if(old)old.qty+=qty;
 else cart.push({id:p.id,size,color,qty});
-
-save();
-
+saveLocal();
 updateCounts();
 toast('تمت إضافة المنتج للسلة');
-
 renderCart();
-
 }
 
-/* =====================================
-   السلة
-===================================== */
-
 function openCart(){
-
 document.getElementById('overlay').classList.add('show');
 document.getElementById('cartDrawer').classList.add('open');
-
 renderCart();
-
 }
 
 function closeCart(){
-
 document.getElementById('overlay').classList.remove('show');
 document.getElementById('cartDrawer').classList.remove('open');
-
 }
 
 function renderCart(){
-
 const el=document.getElementById('cartItems');
-
 if(!cart.length){
-
 el.innerHTML='<div class="empty">السلة فارغة حالياً</div>';
-
 document.getElementById('cartTotal').textContent=money(0);
-
 return;
-
 }
-
 el.innerHTML=cart.map((c,i)=>{
-
 const p=products.find(x=>Number(x.id)===Number(c.id));
-
 if(!p)return'';
-
 return `
-
 <div class="cart-row">
-
-${imageMarkup(p,'cart-img')}
-
+<img class="cart-img" src="${esc(p.image||PLACEHOLDER)}" onerror="this.src='${PLACEHOLDER}'">
 <div>
-
 <b>${esc(p.name)}</b>
-
-<div class="muted">
-المقاس: ${esc(c.size)} • اللون: ${esc(c.color)}
-</div>
-
+<div class="muted">المقاس: ${esc(c.size)} • اللون: ${esc(c.color)}</div>
 <div>${money(p.price)}</div>
-
 <div class="qty">
-
-<button onclick="changeQty(${i},-1)">−</button>
-
-${c.qty}
-
-<button onclick="changeQty(${i},1)">+</button>
-
+<button onclick="changeQty(${i},-1)">−</button>${c.qty}<button onclick="changeQty(${i},1)">+</button>
 <button onclick="removeCart(${i})">حذف</button>
-
 </div>
-
 </div>
-
 <b>${money(p.price*c.qty)}</b>
-
 </div>
-
 `;
-
 }).join('');
-
-document.getElementById('cartTotal').textContent=money(
-cart.reduce((sum,c)=>{
+document.getElementById('cartTotal').textContent=money(cart.reduce((sum,c)=>{
 const p=products.find(x=>Number(x.id)===Number(c.id));
 return sum+(p?Number(p.price)*Number(c.qty):0);
-},0)
-);
-
-loadSavedImages(el);
-
+},0));
 }
 
 function changeQty(i,n){
-
 if(!cart[i])return;
-
 cart[i].qty+=n;
-
-if(cart[i].qty<=0){
-cart.splice(i,1);
-}
-
-save();
+if(cart[i].qty<=0)cart.splice(i,1);
+saveLocal();
 renderCart();
 updateCounts();
-
 }
 
 function removeCart(i){
-
 cart.splice(i,1);
-
-save();
+saveLocal();
 renderCart();
 updateCounts();
-
 }
 
 function checkout(){
-
-if(!cart.length){
-toast('السلة فارغة');
-return;
-}
-
+if(!cart.length){toast('السلة فارغة');return;}
 closeCart();
 openModal('checkoutModal');
-
 }
 
 function sendOrder(){
-
 const name=document.getElementById('custName').value.trim();
 const phone=document.getElementById('custPhone').value.trim();
 const address=document.getElementById('custAddress').value.trim();
 const city=document.getElementById('custCity').value.trim();
 const note=document.getElementById('custNote').value.trim();
 
-if(!name||!phone||!address||!city){
-return toast('من فضلك أكمل بيانات التوصيل');
-}
+if(!name||!phone||!address||!city)return toast('من فضلك أكمل بيانات التوصيل');
 
 const lines=cart.map(c=>{
-
 const p=products.find(x=>Number(x.id)===Number(c.id));
-
-return p?
-`- ${p.name} | ${c.size} | ${c.color} | عدد ${c.qty} | ${money(p.price*c.qty)}`:'';
-
+return p?`- ${p.name} | ${c.size} | ${c.color} | عدد ${c.qty} | ${money(p.price*c.qty)}`:'';
 }).join('\n');
 
 const total=cart.reduce((sum,c)=>{
@@ -1633,726 +1303,182 @@ const p=products.find(x=>Number(x.id)===Number(c.id));
 return sum+(p?Number(p.price)*Number(c.qty):0);
 },0);
 
-const msg=`طلب جديد من متجر JIMMY
+const msg=`طلب جديد من متجر JIMMY\n\nالاسم: ${name}\nالهاتف: ${phone}\nالمحافظة: ${city}\nالعنوان: ${address}\n\nالمنتجات:\n${lines}\n\nالإجمالي: ${money(total)}\n\nملاحظات: ${note||'لا يوجد'}`;
 
-الاسم: ${name}
-
-الهاتف: ${phone}
-
-المحافظة: ${city}
-
-العنوان: ${address}
-
-المنتجات:
-${lines}
-
-الإجمالي: ${money(total)}
-
-ملاحظات: ${note||'لا يوجد'}`;
-
-window.open(
-'https://wa.me/'+WA_NUMBER+'?text='+encodeURIComponent(msg),
-'_blank'
-);
-
+window.open('https://wa.me/'+WA_NUMBER+'?text='+encodeURIComponent(msg),'_blank');
 cart=[];
-
-save();
+saveLocal();
 updateCounts();
 renderCart();
 closeModal('checkoutModal');
-
 toast('تم تجهيز طلبك على واتساب');
-
 }
 
-/* =====================================
-   المفضلة والبحث
-===================================== */
-
 function toggleFav(id){
-
-favs=favs.includes(id)?
-favs.filter(x=>Number(x)!==Number(id)):
-[...favs,id];
-
-save();
+favs=favs.includes(id)?favs.filter(x=>Number(x)!==Number(id)):[...favs,id];
+saveLocal();
 renderProducts();
-
 }
 
 function showFavorites(){
-
-const ids=favs;
-
 document.getElementById('search').value='';
 document.getElementById('category').value='';
-
-document.getElementById('resultCount').textContent=ids.length+' منتجات في المفضلة';
-
-document.getElementById('products').innerHTML=products
-.filter(p=>ids.includes(p.id))
-.map(p=>`
-
+document.getElementById('resultCount').textContent=favs.length+' منتجات في المفضلة';
+document.getElementById('products').innerHTML=products.filter(p=>favs.includes(p.id)).map(p=>`
 <article class="product">
-
-${imageMarkup(p)}
-
+<img class="photo" src="${esc(p.image||PLACEHOLDER)}" onerror="this.src='${PLACEHOLDER}'">
 <div class="pbody">
-
 <b>${esc(p.name)}</b>
-
 <p>${money(p.price)}</p>
-
-<button class="primary gold" onclick="details(${Number(p.id)})">
-عرض المنتج
-</button>
-
+<button class="primary gold" onclick="details(${Number(p.id)})">عرض المنتج</button>
 </div>
 </article>
-
 `).join('')||'<div class="empty">لم تضف منتجات للمفضلة بعد</div>';
-
 updateCounts();
-
-loadSavedImages(document.getElementById('products'));
-
 document.getElementById('shop').scrollIntoView();
-
 }
 
-function openSearch(){
+function openSearch(){document.getElementById('shop').scrollIntoView();document.getElementById('search').focus();}
+function scrollToProducts(){document.getElementById('shop').scrollIntoView({behavior:'smooth'});}
 
-document.getElementById('shop').scrollIntoView();
-document.getElementById('search').focus();
-
-}
-
-function scrollToProducts(){
-
-document.getElementById('shop').scrollIntoView({behavior:'smooth'});
-
-}
-
-/* =====================================
-   النوافذ
-===================================== */
-
-function openModal(id){
-document.getElementById(id).classList.add('show');
-}
-
-function closeModal(id){
-document.getElementById(id).classList.remove('show');
-}
-
-/* =====================================
-   الاشتراك
-===================================== */
+function openModal(id){document.getElementById(id).classList.add('show');}
+function closeModal(id){document.getElementById(id).classList.remove('show');}
 
 function newsletter(){
-
 const value=document.getElementById('newsPhone').value.trim();
-
 if(!value)return toast('اكتب رقم الموبايل');
-
-window.open(
-'https://wa.me/'+WA_NUMBER+'?text='+
-encodeURIComponent('مرحباً JIMMY، أريد الاشتراك في متابعة العروض. رقمي: '+value),
-'_blank'
-);
-
+window.open('https://wa.me/'+WA_NUMBER+'?text='+encodeURIComponent('مرحباً JIMMY، أريد الاشتراك في متابعة العروض. رقمي: '+value),'_blank');
 }
-
-/* =====================================
-   لوحة التحكم
-===================================== */
 
 function adminLogin(){
-
 const pass=prompt('أدخل كلمة مرور لوحة التحكم');
-
-if(pass==='jimmy2026'){
-adminPanel();
-}else if(pass!==null){
-toast('كلمة المرور غير صحيحة');
-}
-
+if(pass==='jimmy2026')adminPanel();
+else if(pass!==null)toast('كلمة المرور غير صحيحة');
 }
 
 function adminPanel(){
-
 document.getElementById('adminContent').innerHTML=`
-
-<h2>لوحة تحكم JIMMY</h2>
-
-<p class="muted">إدارة المنتجات — البيانات محفوظة على هذا المتصفح.</p>
-
+<h2>لوحة تحكم JIMMY (متصلة بالإنترنت)</h2>
+<p class="muted">إدارة المنتجات — أي تعديل أو صورة ترفعها تظهر فوراً لكل العملاء.</p>
 <div class="adminbar">
-
 <button onclick="productForm()">+ إضافة منتج</button>
-
-<button onclick="exportData()">تصدير نسخة احتياطية</button>
-
-<button onclick="document.getElementById('importFile').click()">
-استيراد نسخة
-</button>
-
-<input id="importFile"
-type="file"
-accept="application/json"
-class="hide"
-onchange="importData(event)">
-
 </div>
-
 <table class="admin-list">
-
 <thead>
-<tr>
-<th>المنتج</th>
-<th>السعر</th>
-<th>المخزون</th>
-<th>إجراءات</th>
-</tr>
+<tr><th>المنتج</th><th>السعر</th><th>المخزون</th><th>إجراءات</th></tr>
 </thead>
-
 <tbody>
-
 ${products.map(p=>`
-
 <tr>
-
 <td>${esc(p.name)}</td>
-
 <td>${money(p.price)}</td>
-
 <td>${Number(p.stock)||0}</td>
-
 <td>
-
 <button onclick="productForm(${Number(p.id)})">تعديل</button>
-
 <button onclick="deleteProduct(${Number(p.id)})">حذف</button>
-
 </td>
-
 </tr>
-
 `).join('')}
-
 </tbody>
-
 </table>
-
-<p class="muted">
-كلمة المرور الافتراضية: jimmy2026 — غيّرها داخل الكود قبل نشر الموقع.
-</p>
-
 `;
-
 openModal('adminModal');
-
 }
 
 function productForm(id){
-
+compressedImageBase64=null;
 const p=products.find(x=>Number(x.id)===Number(id))||{
-
-name:'',
-category:'تيشيرتات',
-price:'',
-oldPrice:'',
-desc:'',
-sizes:['S','M','L','XL'],
-colors:['أسود'],
-image:'',
-stock:10,
-badge:''
-
+name:'',category:'تيشيرتات',price:'',oldPrice:'',desc:'',sizes:['S','M','L','XL'],colors:['أسود'],image:'',stock:10,badge:''
 };
+
+const existingImg=p.image&&!p.image.startsWith('data:')?p.image:'';
 
 document.getElementById('adminContent').innerHTML=`
-
 <h2>${id?'تعديل منتج':'إضافة منتج جديد'}</h2>
-
 <div class="formgrid">
-
-<label class="label">
-اسم المنتج
-<input id="aName" class="field" value="${esc(p.name)}">
-</label>
-
-<label class="label">
-القسم
-
+<label class="label">اسم المنتج<input id="aName" class="field" value="${esc(p.name)}"></label>
+<label class="label">القسم
 <select id="aCat" class="field">
-
-${['تيشيرتات','قمصان','بناطيل','هوديز','جاكيتات','أحذية','إكسسوارات'].map(x=>
-`<option ${p.category===x?'selected':''}>${x}</option>`
-).join('')}
-
+${['تيشيرتات','قمصان','بناطيل','هوديز','جاكيتات','أحذية','إكسسوارات'].map(x=>`<option ${p.category===x?'selected':''}>${x}</option>`).join('')}
 </select>
 </label>
+<label class="label">السعر<input id="aPrice" class="field" type="number" min="1" value="${esc(p.price)}"></label>
+<label class="label">السعر قبل الخصم<input id="aOld" class="field" type="number" min="0" value="${esc(p.oldPrice||'')}"></label>
+<label class="label">المخزون<input id="aStock" class="field" type="number" min="0" value="${esc(p.stock??0)}"></label>
+<label class="label">شارة (اختياري)<input id="aBadge" class="field" value="${esc(p.badge||'')}"></label>
+<label class="label wide">وصف المنتج<textarea id="aDesc" class="field" rows="3">${esc(p.desc||'')}</textarea></label>
 
-<label class="label">
-السعر
-<input id="aPrice" class="field" type="number" min="1" value="${esc(p.price)}">
+<label class="label wide" style="background:#eee8dc;padding:12px;border:1px dashed var(--accent);">
+<b>📸 اختر صورة من معرض الموبايل (سيتم ضغطها تلقائياً):</b>
+<input id="aImageFile" class="field" type="file" accept="image/*" onchange="handleImageSelect(event)">
+<div id="compressStatus" style="color:var(--gold-dark);font-size:12px;margin-top:6px;font-weight:bold;"></div>
+<img id="imgPreview" class="img-preview" ${p.image?`src="${esc(p.image)}" style="display:block"`:''}>
 </label>
 
-<label class="label">
-السعر قبل الخصم
-<input id="aOld" class="field" type="number" min="0" value="${esc(p.oldPrice||'')}">
+<label class="label wide">أو ضع رابط صورة خارجي (اختياري)
+<input id="aImageUrl" class="field" value="${esc(existingImg)}" placeholder="https://...">
 </label>
 
-<label class="label">
-المخزون
-<input id="aStock" class="field" type="number" min="0" value="${esc(p.stock??0)}">
-</label>
-
-<label class="label">
-شارة (اختياري)
-<input id="aBadge" class="field" value="${esc(p.badge||'')}">
-</label>
-
-<label class="label wide">
-وصف المنتج
-<textarea id="aDesc" class="field" rows="3">${esc(p.desc||'')}</textarea>
-</label>
-
-<label class="label wide">
-رابط الصورة (اختياري)
-<input id="aImageUrl" class="field" value="${esc(p.image&&!String(p.image).startsWith('idb:')?p.image:'')}" placeholder="https://...">
-</label>
-
-<label class="label wide">
-أو اختر صورة من معرض الموبايل
-
-<input id="aImageFile"
-class="field"
-type="file"
-accept="image/*">
-
-</label>
-
-<label class="label">
-المقاسات مفصولة بفاصلة
-<input id="aSizes" class="field" value="${esc((p.sizes||[]).join(','))}">
-</label>
-
-<label class="label">
-الألوان مفصولة بفاصلة
-<input id="aColors" class="field" value="${esc((p.colors||[]).join(','))}">
-</label>
-
+<label class="label">المقاسات (بينها فاصلة)<input id="aSizes" class="field" value="${esc((p.sizes||[]).join(','))}"></label>
+<label class="label">الألوان (بينها فاصلة)<input id="aColors" class="field" value="${esc((p.colors||[]).join(','))}"></label>
 </div>
-
-<button id="saveProductButton"
-class="primary gold"
-style="margin-top:18px"
-onclick="saveProduct(${Number(id)||0})">
-حفظ المنتج
-</button>
-
+<button id="saveProductButton" class="primary gold" style="margin-top:18px" onclick="saveProduct(${Number(id)||0})">حفظ المنتج</button>
 <button class="outline" onclick="adminPanel()">رجوع</button>
-
 `;
-
 }
-
-/* =====================================
-   حفظ المنتج — النسخة المصححة
-===================================== */
 
 async function saveProduct(id){
+const name=document.getElementById('aName').value.trim();
+const price=Number(document.getElementById('aPrice').value);
+if(!name||!price){toast('اكتب الاسم والسعر بشكل صحيح');return;}
 
-const button=document.getElementById('saveProductButton');
+const btn=document.getElementById('saveProductButton');
+if(btn){btn.disabled=true;btn.textContent='جاري الرفع والحفظ...';}
 
-const nameInput=document.getElementById('aName');
-const priceInput=document.getElementById('aPrice');
+const old=products.find(x=>Number(x.id)===Number(id));
+const urlInput=document.getElementById('aImageUrl').value.trim();
 
-if(!nameInput||!priceInput){
-toast('حصل خطأ في النموذج. افتح إضافة المنتج مرة أخرى.');
-return;
-}
-
-const name=nameInput.value.trim();
-const price=Number(priceInput.value);
-
-if(!name){
-toast('اكتب اسم المنتج');
-nameInput.focus();
-return;
-}
-
-if(!Number.isFinite(price)||price<=0){
-toast('اكتب سعر صحيح للمنتج');
-priceInput.focus();
-return;
-}
-
-const old=products.find(p=>Number(p.id)===Number(id));
-
-const fileInput=document.getElementById('aImageFile');
-const urlInput=document.getElementById('aImageUrl');
-
-const file=fileInput?.files?.[0]||null;
-
-const imageURL=urlInput?.value?.trim()||'';
-
-const oldProducts=products;
-let newImageKey=null;
-let finalImage=imageURL||old?.image||PLACEHOLDER;
-
-if(button){
-button.disabled=true;
-button.textContent='جاري الحفظ...';
-}
-
-try{
-
-/* حفظ الصورة بدون FileReader */
-
-if(file){
-
-if(!file.type.startsWith('image/')){
-throw new Error('الملف المختار ليس صورة');
-}
-
-if(file.size>20*1024*1024){
-throw new Error('حجم الصورة كبير جداً. اختر صورة أقل من 20 ميجا');
-}
-
-toast('جاري تجهيز الصورة وحفظها...');
-
-const prepared=await prepareImage(file);
-
-try{
-
-newImageKey=await storeImage(prepared.blob);
-
-finalImage='idb:'+newImageKey;
-
-}catch(storageError){
-
-console.warn('IndexedDB save failed:',storageError);
-
-if(prepared.dataURL){
-
-finalImage=prepared.dataURL;
-
-}else{
-
-throw new Error('تعذر تخزين الصورة. جرب فتح الموقع في Chrome');
-
-}
-
-}
-
-}
-
-/* قراءة الحقول بأمان */
-
-const category=document.getElementById('aCat')?.value||'تيشيرتات';
-
-const oldPrice=Number(document.getElementById('aOld')?.value)||0;
-
-const stock=Math.max(0,Number(document.getElementById('aStock')?.value)||0);
-
-const badge=document.getElementById('aBadge')?.value?.trim()||'';
-
-const desc=document.getElementById('aDesc')?.value?.trim()||'';
-
-const sizesText=document.getElementById('aSizes')?.value||'';
-
-const colorsText=document.getElementById('aColors')?.value||'';
-
-const sizes=sizesText
-.split(',')
-.map(x=>x.trim())
-.filter(Boolean);
-
-const colors=colorsText
-.split(',')
-.map(x=>x.trim())
-.filter(Boolean);
+let finalImage=compressedImageBase64||urlInput||old?.image||PLACEHOLDER;
 
 const product={
-
-id:old?old.id:Date.now(),
-
+id:id||Date.now(),
 name:name,
-
-category:category,
-
+category:document.getElementById('aCat').value,
 price:price,
-
-oldPrice:oldPrice,
-
-stock:stock,
-
-badge:badge,
-
-desc:desc,
-
+oldPrice:Number(document.getElementById('aOld').value)||0,
+stock:Number(document.getElementById('aStock').value)||0,
+badge:document.getElementById('aBadge').value.trim(),
+desc:document.getElementById('aDesc').value.trim(),
 image:finalImage,
-
-sizes:sizes.length?sizes:['M','L','XL'],
-
-colors:colors.length?colors:['أسود']
-
+sizes:document.getElementById('aSizes').value.split(',').map(x=>x.trim()).filter(Boolean),
+colors:document.getElementById('aColors').value.split(',').map(x=>x.trim()).filter(Boolean)
 };
 
-/* إضافة أو تعديل */
-
-if(old){
-
-products=products.map(p=>
-Number(p.id)===Number(id)?product:p
-);
-
-}else{
-
-products=[product,...products];
-
-}
-
-/* تأكيد الحفظ */
-
-const saved=save();
-
-if(!saved){
-
-products=oldProducts;
-
-if(newImageKey){
-await deleteImageBlob(newImageKey);
-}
-
-if(button){
-button.disabled=false;
-button.textContent='حفظ المنتج';
-}
-
-return;
-
-}
-
-/* حذف الصورة القديمة بعد نجاح الحفظ */
-
-if(
-old&&
-old.image&&
-String(old.image).startsWith('idb:')&&
-old.image!==finalImage
-){
-
-await deleteImageBlob(old.image.slice(4));
-
-}
-
-renderProducts();
+try{
+await window.setDoc(window.doc(window.db,"products",String(product.id)),product);
+await initJimmyApp();
 adminPanel();
-
-toast('تم حفظ المنتج بنجاح ✓');
-
-}catch(error){
-
-console.error('Product save error:',error);
-
-products=oldProducts;
-
-if(newImageKey){
-await deleteImageBlob(newImageKey);
+toast('تم حفظ المنتج بالصورة المضغوطة وظهوره للجميع ✓');
+}catch(e){
+console.error(e);
+toast('حدث خطأ: تأكد من تفعيل Cloud Firestore في وضع Test mode');
+if(btn){btn.disabled=false;btn.textContent='حفظ المنتج';}
 }
-
-if(button){
-button.disabled=false;
-button.textContent='حفظ المنتج';
-}
-
-toast(error.message||'حدث خطأ أثناء حفظ المنتج');
-
-}
-
 }
 
 async function deleteProduct(id){
-
-if(!confirm('متأكد من حذف المنتج؟'))return;
-
-const deleted=products.find(p=>Number(p.id)===Number(id));
-
-products=products.filter(p=>Number(p.id)!==Number(id));
-
-cart=cart.filter(c=>Number(c.id)!==Number(id));
-
-const saved=save();
-
-if(!saved)return;
-
-if(deleted?.image?.startsWith('idb:')){
-await deleteImageBlob(deleted.image.slice(4));
-}
-
-renderProducts();
-adminPanel();
-
-toast('تم حذف المنتج');
-
-}
-
-/* =====================================
-   النسخ الاحتياطي
-===================================== */
-
-async function blobToDataURL(blob){
-
-const buffer=await blob.arrayBuffer();
-
-const bytes=new Uint8Array(buffer);
-
-let binary='';
-
-const chunkSize=0x8000;
-
-for(let i=0;i<bytes.length;i+=chunkSize){
-
-binary+=String.fromCharCode(
-...bytes.subarray(i,i+chunkSize)
-);
-
-}
-
-return 'data:'+(blob.type||'image/jpeg')+';base64,'+btoa(binary);
-
-}
-
-async function exportData(){
-
+if(!confirm('متأكد من حذف المنتج نهائياً؟'))return;
 try{
-
-toast('جاري تجهيز النسخة الاحتياطية...');
-
-const backupProducts=[];
-
-for(const p of products){
-
-const copy={...p};
-
-if(String(copy.image||'').startsWith('idb:')){
-
-const key=copy.image.slice(4);
-
-const blob=await getImageBlob(key);
-
-if(blob){
-copy.image=await blobToDataURL(blob);
-}
-
-}
-
-backupProducts.push(copy);
-
-}
-
-const backup={
-
-products:backupProducts,
-cart:cart,
-favs:favs
-
-};
-
-const blob=new Blob(
-[JSON.stringify(backup,null,2)],
-{type:'application/json'}
-);
-
-const url=URL.createObjectURL(blob);
-
-const a=document.createElement('a');
-
-a.href=url;
-a.download='jimmy-backup.json';
-
-document.body.appendChild(a);
-a.click();
-a.remove();
-
-setTimeout(()=>URL.revokeObjectURL(url),3000);
-
-toast('تم تجهيز النسخة الاحتياطية');
-
-}catch(error){
-
-console.error(error);
-toast('تعذر تصدير النسخة الاحتياطية');
-
-}
-
-}
-
-async function importData(event){
-
-const file=event.target.files?.[0];
-
-if(!file)return;
-
-try{
-
-const text=await file.text();
-
-const data=JSON.parse(text);
-
-if(!Array.isArray(data.products)){
-throw new Error('ملف النسخة غير صالح');
-}
-
-products=data.products;
-cart=Array.isArray(data.cart)?data.cart:[];
-favs=Array.isArray(data.favs)?data.favs:[];
-
-/* نقل الصور المستوردة إلى مخزن الصور */
-
-await migrateOldImages();
-
-const saved=save();
-
-if(!saved){
-toast('تعذر حفظ النسخة المستوردة');
-return;
-}
-
-renderProducts();
+await window.deleteDoc(window.doc(window.db,"products",String(id)));
+await initJimmyApp();
 adminPanel();
-
-toast('تم استيراد النسخة بنجاح');
-
-}catch(error){
-
-console.error(error);
-toast(error.message||'ملف النسخة غير صالح');
-
-}finally{
-
-event.target.value='';
-
+toast('تم حذف المنتج بنجاح');
+}catch(e){
+toast('تعذر حذف المنتج');
 }
-
 }
-
-/* =====================================
-   تشغيل الموقع
-===================================== */
 
 document.getElementById('year').textContent=new Date().getFullYear();
-
-renderProducts();
-renderCart();
-
-migrateOldImages();
-
 </script>
 
 </body>
