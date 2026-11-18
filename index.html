@@ -91,7 +91,6 @@
 
   <script>
     const SUPABASE_URL = 'https://xjzgwmoxvgryunklmdxu.supabase.co';
-    // مفتاح مباشر وغير مقيد لتجاوز أي مشاكل
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhqemd3bW94dnJ5dW5rbG1keHUiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc5NTAwMTg1NCwiZXhwIjoyMTEwNTc3ODU0fQ.Pyv4iVrMSFIQfVugO-8LfS2BhNW9162s20Jnawsvres';
 
     // بيانات المنيو
@@ -174,7 +173,7 @@
       renderCart();
     }
 
-    // إرسال الطلب بطريقة مبسطة وآمنة تماماً
+    // إرسال الطلب مباشرة لـ Supabase
     async function submitOrder() {
       const name = document.getElementById('custName').value.trim();
       const table = document.getElementById('tableNum').value.trim();
@@ -257,11 +256,11 @@
       }
     }
 
-    // التبديل بين واجهة العميل ولوحة الإدارة
+    // التبديل بين واجهة العميل ولوحة الإدارة (كلمة المرور الجديدة: 2544)
     function toggleView() {
       if (!isAdmin) {
-        const pass = prompt('أدخل كلمة مرور الإدارة (الافتراضية: 1234):');
-        if (pass !== '1234') return alert('كلمة المرور غير صحيحة!');
+        const pass = prompt('أدخل كلمة مرور الإدارة:');
+        if (pass !== '2544') return alert('كلمة المرور غير صحيحة!');
         isAdmin = true;
         document.getElementById('clientView').classList.add('hidden');
         document.getElementById('adminView').classList.remove('hidden');
